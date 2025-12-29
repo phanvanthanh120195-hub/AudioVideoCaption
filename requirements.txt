@@ -1,0 +1,12 @@
+# Core Dependencies
+PyQt6>=6.6.0
+
+# Image Processing
+imageio>=2.31.0
+
+# Caption Generation
+openai-whisper
+
+# FFmpeg is required but must be installed separately
+# Download from: https://ffmpeg.org/download.html
+# Ensure ffmpeg is in your system PATH
