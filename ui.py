@@ -17,11 +17,73 @@ import sys
 # Import functions from app.py
 from app import (
     generate_clip_storage, render_video, generate_captions_whisper, 
-    burn_captions_to_video, merge_audio_video_files, process_audio_video_batch
+    burn_captions_to_video, merge_audio_video_files, process_audio_video_batch,
+    get_audio_duration, get_video_duration, format_duration
 )
 
 # Import task queue
 from task_queue import RenderTask, TaskQueue
+
+
+class TimelineWidget(QWidget):
+    """Custom widget to display timeline visualization for media files"""
+    
+    def __init__(self, duration: float, max_duration: float, file_type: str = "mp3", parent=None):
+        super().__init__(parent)
+        self.duration = duration
+        self.max_duration = max_duration
+        self.file_type = file_type.lower()
+        
+        # Set up layout
+        layout = QHBoxLayout()
+        layout.setContentsMargins(5, 2, 5, 2)
+        layout.setSpacing(5)
+        
+        # Duration label
+        duration_text = format_duration(duration)
+        self.duration_label = QLabel(duration_text)
+        self.duration_label.setMinimumWidth(60)
+        self.duration_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.duration_label.setFont(QFont("Segoe UI", 8))
+        layout.addWidget(self.duration_label)
+        
+        # Timeline bar
+        self.timeline_bar = QFrame()
+        self.timeline_bar.setFrameShape(QFrame.Shape.StyledPanel)
+        self.timeline_bar.setMinimumHeight(12)
+        self.timeline_bar.setMaximumHeight(12)
+        
+        # Calculate width based on duration ratio (max 200px)
+        if max_duration > 0:
+            bar_width = int((duration / max_duration) * 200)
+        else:
+            bar_width = 100
+        self.timeline_bar.setMinimumWidth(bar_width)
+        self.timeline_bar.setMaximumWidth(bar_width)
+        
+        # Set color based on file type
+        if self.file_type == "mp3":
+            color = "#4DABF7"  # Blue for audio
+        elif self.file_type == "mp4":
+            color = "#FF922B"  # Orange for video
+        else:
+            color = "#868E96"  # Gray for unknown
+        
+        self.timeline_bar.setStyleSheet(f"""
+            QFrame {{
+                background-color: {color};
+                border-radius: 6px;
+                border: none;
+            }}
+        """)
+        
+        # Tooltip with exact duration
+        self.timeline_bar.setToolTip(f"{duration:.2f} seconds")
+        
+        layout.addWidget(self.timeline_bar)
+        layout.addStretch()
+        
+        self.setLayout(layout)
 
 
 class OutputRedirector(QObject):
@@ -451,16 +513,22 @@ class AudiobookVideoCreatorUI(QMainWindow):
         layout.addWidget(list_label)
         
         self.file_list_table = QTableWidget()
-        self.file_list_table.setColumnCount(3)
-        self.file_list_table.setHorizontalHeaderLabels(["MP3 File", "MP4 File", "Status"])
+        self.file_list_table.setColumnCount(5)
+        self.file_list_table.setHorizontalHeaderLabels([
+            "MP3 File", "MP3 Timeline", "MP4 File", "MP4 Timeline", "Status"
+        ])
         self.file_list_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.file_list_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.file_list_table.setAlternatingRowColors(True)
         self.file_list_table.horizontalHeader().setStretchLastSection(False)
         self.file_list_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self.file_list_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        self.file_list_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
-        self.file_list_table.setColumnWidth(2, 100)
+        self.file_list_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
+        self.file_list_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self.file_list_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
+        self.file_list_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
+        self.file_list_table.setColumnWidth(1, 280)  # MP3 Timeline
+        self.file_list_table.setColumnWidth(3, 280)  # MP4 Timeline
+        self.file_list_table.setColumnWidth(4, 100)  # Status
         self.file_list_table.setMinimumHeight(150)
         self.file_list_table.setMaximumHeight(200)
         layout.addWidget(self.file_list_table)
@@ -827,41 +895,100 @@ class AudiobookVideoCreatorUI(QMainWindow):
         mp4_files = {f.stem: f.name for f in video_path.glob("*.mp4")}
         mp4_files.update({f.stem: f.name for f in video_path.glob("*.MP4")})
         
-        # Add matched pairs
+        # Get all unique names
         all_names = set(mp3_files.keys()) | set(mp4_files.keys())
+        
+        # Extract durations and find max duration for scaling
+        file_durations = {}
+        max_duration = 0.0
+        
+        for name in all_names:
+            mp3_duration = 0.0
+            mp4_duration = 0.0
+            
+            # Get MP3 duration
+            if name in mp3_files:
+                mp3_file_path = audio_path / mp3_files[name]
+                try:
+                    mp3_duration = get_audio_duration(str(mp3_file_path))
+                    max_duration = max(max_duration, mp3_duration)
+                except Exception as e:
+                    print(f"Error getting MP3 duration for {mp3_files[name]}: {e}")
+            
+            # Get MP4 duration
+            if name in mp4_files:
+                mp4_file_path = video_path / mp4_files[name]
+                try:
+                    mp4_duration = get_video_duration(str(mp4_file_path))
+                    max_duration = max(max_duration, mp4_duration)
+                except Exception as e:
+                    print(f"Error getting MP4 duration for {mp4_files[name]}: {e}")
+            
+            file_durations[name] = (mp3_duration, mp4_duration)
+        
+        # Add matched pairs to table
         row = 0
         
         for name in sorted(all_names):
             self.file_list_table.insertRow(row)
             
-            # MP3 file
             mp3_name = mp3_files.get(name, "")
+            mp4_name = mp4_files.get(name, "")
+            mp3_duration, mp4_duration = file_durations[name]
+            
+            # Column 0: MP3 file name
             mp3_item = QTableWidgetItem(mp3_name if mp3_name else "⚠️ Missing")
             if not mp3_name:
                 mp3_item.setForeground(QColor("#FF6B6B"))
             self.file_list_table.setItem(row, 0, mp3_item)
             
-            # MP4 file
-            mp4_name = mp4_files.get(name, "")
+            # Column 1: MP3 timeline
+            if mp3_name and mp3_duration > 0:
+                mp3_timeline = TimelineWidget(mp3_duration, max_duration, "mp3")
+                self.file_list_table.setCellWidget(row, 1, mp3_timeline)
+            else:
+                empty_item = QTableWidgetItem("")
+                self.file_list_table.setItem(row, 1, empty_item)
+            
+            # Column 2: MP4 file name
             mp4_item = QTableWidgetItem(mp4_name if mp4_name else "⚠️ Missing")
             if not mp4_name:
                 mp4_item.setForeground(QColor("#FF6B6B"))
-            self.file_list_table.setItem(row, 1, mp4_item)
+            self.file_list_table.setItem(row, 2, mp4_item)
             
-            # Status
+            # Column 3: MP4 timeline
+            if mp4_name and mp4_duration > 0:
+                mp4_timeline = TimelineWidget(mp4_duration, max_duration, "mp4")
+                self.file_list_table.setCellWidget(row, 3, mp4_timeline)
+            else:
+                empty_item = QTableWidgetItem("")
+                self.file_list_table.setItem(row, 3, empty_item)
+            
+            # Column 4: Status
             if mp3_name and mp4_name:
-                status_item = QTableWidgetItem("✓ Ready")
-                status_item.setForeground(QColor("#51CF66"))
+                # Check if durations are similar (within 10% difference)
+                if mp3_duration > 0 and mp4_duration > 0:
+                    duration_diff = abs(mp3_duration - mp4_duration) / max(mp3_duration, mp4_duration)
+                    if duration_diff < 0.1:
+                        status_item = QTableWidgetItem("✓ Ready")
+                        status_item.setForeground(QColor("#51CF66"))
+                    else:
+                        status_item = QTableWidgetItem("⚠️ Duration Mismatch")
+                        status_item.setForeground(QColor("#FFA94D"))
+                else:
+                    status_item = QTableWidgetItem("✓ Ready")
+                    status_item.setForeground(QColor("#51CF66"))
             else:
                 status_item = QTableWidgetItem("⚠️ Skip")
                 status_item.setForeground(QColor("#FF6B6B"))
-            self.file_list_table.setItem(row, 2, status_item)
+            self.file_list_table.setItem(row, 4, status_item)
             
             row += 1
         
         # Update status label
         matched_count = sum(1 for name in all_names if name in mp3_files and name in mp4_files)
         self.merge_status.setText(f"Found {matched_count} matched pair(s) ready to process")
+
     
     def generate_clips(self):
         """Generate clips in background thread"""

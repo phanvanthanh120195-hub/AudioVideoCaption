@@ -115,6 +115,26 @@ def get_audio_duration(audio_path: str) -> float:
     out = subprocess.check_output(cmd, shell=True).decode().strip()
     return float(out)
 
+def get_video_duration(video_path: str) -> float:
+    """Get video duration in seconds using ffprobe"""
+    cmd = (
+        f'ffprobe -v error -show_entries format=duration '
+        f'-of default=noprint_wrappers=1:nokey=1 "{video_path}"'
+    )
+    out = subprocess.check_output(cmd, shell=True).decode().strip()
+    return float(out)
+
+def format_duration(seconds: float) -> str:
+    """Format duration in seconds to MM:SS or HH:MM:SS"""
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    secs = int(seconds % 60)
+    
+    if hours > 0:
+        return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+    else:
+        return f"{minutes:02d}:{secs:02d}"
+
 def list_images(images_dir: str) -> List[str]:
     exts = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
     imgs = []
