@@ -25,63 +25,30 @@ from app import (
 from task_queue import RenderTask, TaskQueue
 
 
-class TimelineWidget(QWidget):
-    """Custom widget to display timeline visualization for media files"""
+class DurationLabel(QWidget):
+    """Simple widget to display duration in HH:MM:SS format"""
     
-    def __init__(self, duration: float, max_duration: float, file_type: str = "mp3", parent=None):
+    def __init__(self, duration: float, parent=None):
         super().__init__(parent)
         self.duration = duration
-        self.max_duration = max_duration
-        self.file_type = file_type.lower()
         
         # Set up layout
         layout = QHBoxLayout()
         layout.setContentsMargins(5, 2, 5, 2)
-        layout.setSpacing(5)
+        layout.setSpacing(0)
+        
+        # Format duration to always show HH:MM:SS
+        hours = int(duration // 3600)
+        minutes = int((duration % 3600) // 60)
+        seconds = int(duration % 60)
+        duration_text = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
         
         # Duration label
-        duration_text = format_duration(duration)
         self.duration_label = QLabel(duration_text)
-        self.duration_label.setMinimumWidth(60)
-        self.duration_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        self.duration_label.setFont(QFont("Segoe UI", 8))
+        self.duration_label.setAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
+        self.duration_label.setFont(QFont("Segoe UI", 9))
+        self.duration_label.setToolTip(f"{duration:.2f} seconds")
         layout.addWidget(self.duration_label)
-        
-        # Timeline bar
-        self.timeline_bar = QFrame()
-        self.timeline_bar.setFrameShape(QFrame.Shape.StyledPanel)
-        self.timeline_bar.setMinimumHeight(12)
-        self.timeline_bar.setMaximumHeight(12)
-        
-        # Calculate width based on duration ratio (max 200px)
-        if max_duration > 0:
-            bar_width = int((duration / max_duration) * 200)
-        else:
-            bar_width = 100
-        self.timeline_bar.setMinimumWidth(bar_width)
-        self.timeline_bar.setMaximumWidth(bar_width)
-        
-        # Set color based on file type
-        if self.file_type == "mp3":
-            color = "#4DABF7"  # Blue for audio
-        elif self.file_type == "mp4":
-            color = "#FF922B"  # Orange for video
-        else:
-            color = "#868E96"  # Gray for unknown
-        
-        self.timeline_bar.setStyleSheet(f"""
-            QFrame {{
-                background-color: {color};
-                border-radius: 6px;
-                border: none;
-            }}
-        """)
-        
-        # Tooltip with exact duration
-        self.timeline_bar.setToolTip(f"{duration:.2f} seconds")
-        
-        layout.addWidget(self.timeline_bar)
-        layout.addStretch()
         
         self.setLayout(layout)
 
@@ -515,7 +482,7 @@ class AudiobookVideoCreatorUI(QMainWindow):
         self.file_list_table = QTableWidget()
         self.file_list_table.setColumnCount(5)
         self.file_list_table.setHorizontalHeaderLabels([
-            "MP3 File", "MP3 Timeline", "MP4 File", "MP4 Timeline", "Status"
+            "MP3 File", "Duration", "MP4 File", "Duration", "Status"
         ])
         self.file_list_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.file_list_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -526,8 +493,8 @@ class AudiobookVideoCreatorUI(QMainWindow):
         self.file_list_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         self.file_list_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
         self.file_list_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
-        self.file_list_table.setColumnWidth(1, 280)  # MP3 Timeline
-        self.file_list_table.setColumnWidth(3, 280)  # MP4 Timeline
+        self.file_list_table.setColumnWidth(1, 90)  # MP3 Duration
+        self.file_list_table.setColumnWidth(3, 90)  # MP4 Duration
         self.file_list_table.setColumnWidth(4, 100)  # Status
         self.file_list_table.setMinimumHeight(150)
         self.file_list_table.setMaximumHeight(200)
@@ -942,10 +909,18 @@ class AudiobookVideoCreatorUI(QMainWindow):
                 mp3_item.setForeground(QColor("#FF6B6B"))
             self.file_list_table.setItem(row, 0, mp3_item)
             
-            # Column 1: MP3 timeline
+            # Column 1: MP3 duration
             if mp3_name and mp3_duration > 0:
-                mp3_timeline = TimelineWidget(mp3_duration, max_duration, "mp3")
-                self.file_list_table.setCellWidget(row, 1, mp3_timeline)
+                # Format duration to HH:MM:SS
+                hours = int(mp3_duration // 3600)
+                minutes = int((mp3_duration % 3600) // 60)
+                seconds = int(mp3_duration % 60)
+                duration_text = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+                
+                mp3_duration_item = QTableWidgetItem(duration_text)
+                mp3_duration_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                mp3_duration_item.setToolTip(f"{mp3_duration:.2f} seconds")
+                self.file_list_table.setItem(row, 1, mp3_duration_item)
             else:
                 empty_item = QTableWidgetItem("")
                 self.file_list_table.setItem(row, 1, empty_item)
@@ -956,10 +931,18 @@ class AudiobookVideoCreatorUI(QMainWindow):
                 mp4_item.setForeground(QColor("#FF6B6B"))
             self.file_list_table.setItem(row, 2, mp4_item)
             
-            # Column 3: MP4 timeline
+            # Column 3: MP4 duration
             if mp4_name and mp4_duration > 0:
-                mp4_timeline = TimelineWidget(mp4_duration, max_duration, "mp4")
-                self.file_list_table.setCellWidget(row, 3, mp4_timeline)
+                # Format duration to HH:MM:SS
+                hours = int(mp4_duration // 3600)
+                minutes = int((mp4_duration % 3600) // 60)
+                seconds = int(mp4_duration % 60)
+                duration_text = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+                
+                mp4_duration_item = QTableWidgetItem(duration_text)
+                mp4_duration_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                mp4_duration_item.setToolTip(f"{mp4_duration:.2f} seconds")
+                self.file_list_table.setItem(row, 3, mp4_duration_item)
             else:
                 empty_item = QTableWidgetItem("")
                 self.file_list_table.setItem(row, 3, empty_item)
