@@ -18,6 +18,7 @@ import sys
 from app import (
     generate_clip_storage, render_video, generate_captions_whisper, 
     burn_captions_to_video, merge_audio_video_files, process_audio_video_batch,
+    process_burn_captions_batch,
     get_audio_duration, get_video_duration, format_duration
 )
 
@@ -278,6 +279,7 @@ class AudiobookVideoCreatorUI(QMainWindow):
         
         # Worker thread
         self.worker = None
+        self.queue_worker = None
         
         # Setup UI
         self.init_ui()
@@ -331,9 +333,30 @@ class AudiobookVideoCreatorUI(QMainWindow):
         main_layout.setSpacing(15)
         main_layout.setContentsMargins(20, 20, 20, 20)
         
-        # Video Rendering Section (no tabs, direct layout)
+        # Main Tab Widget
+        self.tabs = QTabWidget()
+        
+        # Tab 1: Merge MP3 + MP4
+        self.merge_tab = QWidget()
+        merge_layout = QVBoxLayout()
+        # Use existing create_video_rendering_section
         render_group = self.create_video_rendering_section()
-        main_layout.addWidget(render_group)
+        merge_layout.addWidget(render_group)
+        # merge_layout.addStretch() # Optional, depends on content
+        self.merge_tab.setLayout(merge_layout)
+        self.tabs.addTab(self.merge_tab, "Merge Audio/Video")
+        
+        # Tab 2: Burn Captions
+        self.burn_tab = QWidget()
+        burn_layout = QVBoxLayout()
+        # Create new section
+        burn_group = self.create_burn_captions_section()
+        burn_layout.addWidget(burn_group)
+        # burn_layout.addStretch()
+        self.burn_tab.setLayout(burn_layout)
+        self.tabs.addTab(self.burn_tab, "Burn Captions in Video")
+        
+        main_layout.addWidget(self.tabs)
         
         # Console Output Section - Fixed at bottom, always visible
         console_group = self.create_console_section()
@@ -343,6 +366,121 @@ class AudiobookVideoCreatorUI(QMainWindow):
         
         # Redirect stdout and stderr to console
         self.setup_output_redirection()
+
+    def create_burn_captions_section(self):
+        """Create the UI for the Burn Captions tab"""
+        group = QGroupBox("🔥 Burn Captions into Video")
+        layout = QVBoxLayout()
+        
+        # Input: Video Folder
+        video_layout = QHBoxLayout()
+        video_label = QLabel("Video Folder (MP4):")
+        video_label.setMinimumWidth(120)
+        self.burn_video_path = QLineEdit(self.settings.get("last_burn_video_folder", ""))
+        video_btn = QPushButton("Browse")
+        video_btn.clicked.connect(self.browse_burn_video_folder)
+        video_layout.addWidget(video_label)
+        video_layout.addWidget(self.burn_video_path)
+        video_layout.addWidget(video_btn)
+        layout.addLayout(video_layout)
+        
+        # Input: SRT Folder
+        srt_layout = QHBoxLayout()
+        srt_label = QLabel("Subtitle Folder (SRT):")
+        srt_label.setMinimumWidth(120)
+        self.burn_srt_path = QLineEdit(self.settings.get("last_burn_srt_folder", ""))
+        srt_btn = QPushButton("Browse")
+        srt_btn.clicked.connect(self.browse_burn_srt_folder)
+        srt_layout.addWidget(srt_label)
+        srt_layout.addWidget(self.burn_srt_path)
+        srt_layout.addWidget(srt_btn)
+        layout.addLayout(srt_layout)
+        
+        # Output: Folder
+        out_layout = QHBoxLayout()
+        out_label = QLabel("Output Folder:")
+        out_label.setMinimumWidth(120)
+        self.burn_output_path = QLineEdit(self.settings.get("last_burn_output_folder", ""))
+        out_btn = QPushButton("Browse")
+        out_btn.clicked.connect(self.browse_burn_output_folder)
+        out_layout.addWidget(out_label)
+        out_layout.addWidget(self.burn_output_path)
+        out_layout.addWidget(out_btn)
+        layout.addLayout(out_layout)
+        
+        # Config options (Color, Font Size)
+        config_layout = QHBoxLayout()
+        
+        # Font Size
+        config_layout.addWidget(QLabel("Font Size:"))
+        self.burn_font_size = QSpinBox()
+        self.burn_font_size.setRange(10, 100)
+        self.burn_font_size.setValue(24)
+        config_layout.addWidget(self.burn_font_size)
+        
+        # Color
+        config_layout.addWidget(QLabel("Color:"))
+        self.burn_color_combo = QComboBox()
+        self.burn_color_combo.addItems(["white", "yellow", "green", "blue", "red", "black"])
+        config_layout.addWidget(self.burn_color_combo)
+        
+        config_layout.addStretch()
+        layout.addLayout(config_layout)
+        
+        # File List Table using QTableWidget
+        list_label = QLabel("Matched Files:")
+        list_label.setStyleSheet("font-weight: bold; margin-top: 10px;")
+        layout.addWidget(list_label)
+        
+        self.burn_file_table = QTableWidget()
+        self.burn_file_table.setColumnCount(5)
+        self.burn_file_table.setHorizontalHeaderLabels([
+            "Video File", "Duration", "Subtitle File", "Status", "Actions"
+        ])
+        self.burn_file_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.burn_file_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.burn_file_table.setAlternatingRowColors(True)
+        self.burn_file_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.burn_file_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
+        self.burn_file_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self.burn_file_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
+        self.burn_file_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
+        self.burn_file_table.setColumnWidth(1, 90)
+        self.burn_file_table.setColumnWidth(3, 100)
+        self.burn_file_table.setColumnWidth(4, 80)
+        self.burn_file_table.verticalHeader().setDefaultSectionSize(40)
+        self.burn_file_table.setMinimumHeight(200)
+        layout.addWidget(self.burn_file_table)
+        
+        # Status Label
+        self.burn_status_label = QLabel("Select folders to find matched files")
+        self.burn_status_label.setStyleSheet("color: #7f8c8d; font-style: italic;")
+        self.burn_status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.burn_status_label)
+        
+        # Process Button
+        self.burn_process_btn = QPushButton("🔥 Start Burning Captions")
+        self.burn_process_btn.setMinimumHeight(40)
+        self.burn_process_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #e67e22; 
+                color: white; 
+                font-weight: bold; 
+                font-size: 14px;
+                border-radius: 4px;
+            }
+            QPushButton:hover { background-color: #d35400; }
+            QPushButton:disabled { background-color: #95a5a6; }
+        """)
+        self.burn_process_btn.clicked.connect(self.process_burn_batch_ui)
+        layout.addWidget(self.burn_process_btn)
+        
+        # Connect text changes to auto-update list
+        self.burn_video_path.textChanged.connect(self.update_burn_file_list)
+        self.burn_srt_path.textChanged.connect(self.update_burn_file_list)
+        
+        group.setLayout(layout)
+        return group
     
     def create_directory_section(self):
         """Create directory selection section"""
@@ -480,9 +618,9 @@ class AudiobookVideoCreatorUI(QMainWindow):
         layout.addWidget(list_label)
         
         self.file_list_table = QTableWidget()
-        self.file_list_table.setColumnCount(5)
+        self.file_list_table.setColumnCount(6)
         self.file_list_table.setHorizontalHeaderLabels([
-            "MP3 File", "Duration", "MP4 File", "Duration", "Status"
+            "MP3 File", "Duration", "MP4 File", "Duration", "Status", "Actions"
         ])
         self.file_list_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.file_list_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -496,6 +634,8 @@ class AudiobookVideoCreatorUI(QMainWindow):
         self.file_list_table.setColumnWidth(1, 90)  # MP3 Duration
         self.file_list_table.setColumnWidth(3, 90)  # MP4 Duration
         self.file_list_table.setColumnWidth(4, 100)  # Status
+        self.file_list_table.setColumnWidth(5, 80)   # Actions
+        self.file_list_table.verticalHeader().setDefaultSectionSize(40)
         self.file_list_table.setMinimumHeight(150)
         self.file_list_table.setMaximumHeight(200)
         layout.addWidget(self.file_list_table)
@@ -966,13 +1106,92 @@ class AudiobookVideoCreatorUI(QMainWindow):
                 status_item.setForeground(QColor("#FF6B6B"))
             self.file_list_table.setItem(row, 4, status_item)
             
+            # Column 5: Actions (Remove button)
+            remove_btn = QPushButton("❌")
+            remove_btn.setFixedSize(30, 30)
+            remove_btn.setToolTip("Remove this file from list")
+            remove_btn.setStyleSheet("""
+                QPushButton {
+                    border: none;
+                    background-color: transparent;
+                    font-size: 14px;
+                }
+                QPushButton:hover {
+                    background-color: rgba(255, 107, 107, 0.2);
+                    border-radius: 4px;
+                }
+            """)
+            # Use closure to capture current row
+            remove_btn.clicked.connect(lambda checked, r=row: self.remove_file_row(r))
+            
+            # Create a container widget for the button
+            btn_widget = QWidget()
+            btn_layout = QHBoxLayout(btn_widget)
+            btn_layout.setContentsMargins(0, 0, 0, 0)
+            btn_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            btn_layout.addWidget(remove_btn)
+            
+            self.file_list_table.setCellWidget(row, 5, btn_widget)
+            
             row += 1
         
         # Update status label
         matched_count = sum(1 for name in all_names if name in mp3_files and name in mp4_files)
         self.merge_status.setText(f"Found {matched_count} matched pair(s) ready to process")
 
-    
+    def remove_file_row(self, row):
+        """Remove a row from the file list table"""
+        # Get the filename to show in confirmation (optional)
+        try:
+            filename = self.file_list_table.item(row, 0).text()
+            if not filename or filename == "⚠️ Missing":
+                filename = self.file_list_table.item(row, 2).text()
+                
+            # Remove the row
+            self.file_list_table.removeRow(row)
+            
+            # Re-bind click events for remaining rows to ensure correct row index
+            # This is tricky because lambda captures value at definition time.
+            # But when row is removed, indices shift. 
+            # Easiest way is to just let it be, but wait - 
+            # If I remove row 0, row 1 becomes row 0. But its button still thinks r=1.
+            # So clicking it will try to remove row 1 (which might be row 2 now).
+            # We need to re-render or update indices. 
+            # Re-rendering the whole table is expensive? No, we have the data.
+            # But we don't store the data in a persistent list in the class, we parse it from files each time.
+            # So just removing visual row is risky if we don't update listeners.
+            
+            # Better approach: Use finder to find the button's row at runtime.
+            # Or simpler: Re-scanning is safest but might reset other things? No.
+            # But since we just want to remove from the current list...
+            
+            # Let's update the buttons.
+            for r in range(self.file_list_table.rowCount()):
+                widget = self.file_list_table.cellWidget(r, 5)
+                if widget:
+                    # Find the button inside
+                    btn = widget.findChild(QPushButton)
+                    if btn:
+                        # Disconnect all
+                        try: btn.clicked.disconnect() 
+                        except: pass
+                        # Reconnect
+                        btn.clicked.connect(lambda checked, current_r=r: self.remove_file_row(current_r))
+                        
+            # Update status label
+            self.update_ready_count_status()
+            
+        except Exception as e:
+            print(f"Error removing row: {e}")
+
+    def update_ready_count_status(self):
+        """Update the status text with current matched pairs count"""
+        ready_count = 0
+        for row in range(self.file_list_table.rowCount()):
+            status_item = self.file_list_table.item(row, 4)
+            if status_item and "Ready" in status_item.text():
+                ready_count += 1
+        self.merge_status.setText(f"Found {ready_count} matched pair(s) ready to process")
     def generate_clips(self):
         """Generate clips in background thread"""
         if self.worker and self.worker.isRunning():
@@ -1059,7 +1278,7 @@ class AudiobookVideoCreatorUI(QMainWindow):
         # Count ready pairs
         ready_count = 0
         for row in range(self.file_list_table.rowCount()):
-            status = self.file_list_table.item(row, 2).text()
+            status = self.file_list_table.item(row, 4).text()
             if "Ready" in status:
                 ready_count += 1
         
@@ -1617,6 +1836,235 @@ class AudiobookVideoCreatorUI(QMainWindow):
     
     # ========== End Queue Management Methods ==========
     
+    # ========== Burn Captions Methods ==========
+    
+    def browse_burn_video_folder(self):
+        """Browse for video folder for burning captions"""
+        current_path = self.burn_video_path.text() or "."
+        folder = QFileDialog.getExistingDirectory(
+            self, "Select Video Folder (MP4s)", current_path
+        )
+        if folder:
+            self.burn_video_path.setText(folder)
+            self.settings["last_burn_video_folder"] = folder
+            self.save_settings()
+            self.update_burn_file_list()
+
+    def browse_burn_srt_folder(self):
+        """Browse for subtitle folder for burning captions"""
+        current_path = self.burn_srt_path.text() or "."
+        folder = QFileDialog.getExistingDirectory(
+            self, "Select Subtitle Folder (SRTs)", current_path
+        )
+        if folder:
+            self.burn_srt_path.setText(folder)
+            self.settings["last_burn_srt_folder"] = folder
+            self.save_settings()
+            self.update_burn_file_list()
+
+    def browse_burn_output_folder(self):
+        """Browse for output folder for burning captions"""
+        current_path = self.burn_output_path.text() or "."
+        folder = QFileDialog.getExistingDirectory(
+            self, "Select Output Folder", current_path
+        )
+        if folder:
+            self.burn_output_path.setText(folder)
+            self.settings["last_burn_output_folder"] = folder
+            self.save_settings()
+
+    def update_burn_file_list(self):
+        """Update burn file list table with matched MP4-SRT pairs"""
+        self.burn_file_table.setRowCount(0)
+        
+        video_folder = self.burn_video_path.text()
+        srt_folder = self.burn_srt_path.text()
+        
+        if not video_folder or not srt_folder:
+            return
+        
+        if not os.path.exists(video_folder) or not os.path.exists(srt_folder):
+            return
+        
+        # Scan for MP4 files
+        video_path = Path(video_folder)
+        mp4_files = {f.stem: f.name for f in video_path.glob("*.mp4")}
+        mp4_files.update({f.stem: f.name for f in video_path.glob("*.MP4")})
+        
+        # Scan for SRT files
+        srt_path = Path(srt_folder)
+        srt_files = {f.stem: f.name for f in srt_path.glob("*.srt")}
+        srt_files.update({f.stem: f.name for f in srt_path.glob("*.SRT")})
+        
+        # Get all unique names
+        all_names = set(mp4_files.keys()) | set(srt_files.keys())
+        
+        # Add matched pairs to table
+        row = 0
+        
+        for name in sorted(all_names):
+            self.burn_file_table.insertRow(row)
+            
+            mp4_name = mp4_files.get(name, "")
+            srt_name = srt_files.get(name, "")
+            
+            # Column 0: MP4 file name
+            mp4_item = QTableWidgetItem(mp4_name if mp4_name else "⚠️ Missing")
+            if not mp4_name:
+                mp4_item.setForeground(QColor("#FF6B6B"))
+            self.burn_file_table.setItem(row, 0, mp4_item)
+            
+            # Column 1: MP4 duration (Optional, can include if needed)
+            duration_item = QTableWidgetItem("")
+            if mp4_name:
+                try:
+                    duration = get_video_duration(str(video_path / mp4_name))
+                    hours = int(duration // 3600)
+                    minutes = int((duration % 3600) // 60)
+                    seconds = int(duration % 60)
+                    duration_text = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+                    duration_item.setText(duration_text)
+                    duration_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                except:
+                    pass
+            self.burn_file_table.setItem(row, 1, duration_item)
+            
+            # Column 2: SRT file name
+            srt_item = QTableWidgetItem(srt_name if srt_name else "⚠️ Missing")
+            if not srt_name:
+                srt_item.setForeground(QColor("#FF6B6B"))
+            self.burn_file_table.setItem(row, 2, srt_item)
+            
+            # Column 3: Status
+            if mp4_name and srt_name:
+                status_item = QTableWidgetItem("✓ Ready")
+                status_item.setForeground(QColor("#51CF66"))
+            else:
+                status_item = QTableWidgetItem("⚠️ Skip")
+                status_item.setForeground(QColor("#FF6B6B"))
+            self.burn_file_table.setItem(row, 3, status_item)
+            
+            # Column 4: Actions (Remove button)
+            remove_btn = QPushButton("❌")
+            remove_btn.setFixedSize(30, 30)
+            remove_btn.setToolTip("Remove this file from list")
+            remove_btn.setStyleSheet("""
+                QPushButton {
+                    border: none;
+                    background-color: transparent;
+                    font-size: 14px;
+                }
+                QPushButton:hover {
+                    background-color: rgba(255, 107, 107, 0.2);
+                    border-radius: 4px;
+                }
+            """)
+            # Use closure to capture current row
+            remove_btn.clicked.connect(lambda checked, r=row: self.remove_burn_file_row(r))
+            
+            # Create a container widget for the button
+            btn_widget = QWidget()
+            btn_layout = QHBoxLayout(btn_widget)
+            btn_layout.setContentsMargins(0, 0, 0, 0)
+            btn_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            btn_layout.addWidget(remove_btn)
+            
+            self.burn_file_table.setCellWidget(row, 4, btn_widget)
+            
+            row += 1
+            
+        # Update status
+        matched_count = sum(1 for name in all_names if name in mp4_files and name in srt_files)
+        self.burn_status_label.setText(f"Found {matched_count} matched pair(s) ready to process")
+
+    def remove_burn_file_row(self, row):
+        """Remove a row from the burn file list table"""
+        try:
+            self.burn_file_table.removeRow(row)
+            
+            # Update buttons
+            for r in range(self.burn_file_table.rowCount()):
+                widget = self.burn_file_table.cellWidget(r, 4)
+                if widget:
+                    btn = widget.findChild(QPushButton)
+                    if btn:
+                        try: btn.clicked.disconnect() 
+                        except: pass
+                        btn.clicked.connect(lambda checked, current_r=r: self.remove_burn_file_row(current_r))
+            
+            # Update status
+            ready_count = 0
+            for r in range(self.burn_file_table.rowCount()):
+                status_item = self.burn_file_table.item(r, 3)
+                if status_item and "Ready" in status_item.text():
+                    ready_count += 1
+            self.burn_status_label.setText(f"Found {ready_count} matched pair(s) ready to process")
+            
+        except Exception as e:
+            print(f"Error removing row: {e}")
+
+    def process_burn_batch_ui(self):
+        """Process batch burning of captions"""
+        if self.worker and self.worker.isRunning():
+            QMessageBox.warning(self, "Busy", "An operation is already running!")
+            return
+        
+        video_folder = self.burn_video_path.text()
+        srt_folder = self.burn_srt_path.text()
+        output_folder = self.burn_output_path.text()
+        
+        if not video_folder or not os.path.exists(video_folder):
+            QMessageBox.critical(self, "Error", "Please select a valid video folder!")
+            return
+        
+        if not srt_folder or not os.path.exists(srt_folder):
+            QMessageBox.critical(self, "Error", "Please select a valid subtitle folder!")
+            return
+            
+        if not output_folder:
+            QMessageBox.critical(self, "Error", "Please specify an output folder!")
+            return
+            
+        # Check for ready files
+        ready_count = 0
+        for r in range(self.burn_file_table.rowCount()):
+            if "Ready" in self.burn_file_table.item(r, 3).text():
+                ready_count += 1
+                
+        if ready_count == 0:
+            QMessageBox.critical(self, "Error", "No matched files to process!")
+            return
+            
+        # Get settings
+        font_size = self.burn_font_size.value()
+        color = self.burn_color_combo.currentText()
+        
+        # Disable UI
+        self.burn_process_btn.setEnabled(False)
+        self.burn_status_label.setText(f"Processing {ready_count} pairs...")
+        
+        # Start Worker
+        self.worker = WorkerThread(
+            process_burn_captions_batch,
+            video_folder=video_folder,
+            srt_folder=srt_folder,
+            output_folder=output_folder,
+            font_size=font_size,
+            font_color=color
+        )
+        self.worker.finished.connect(self.on_burn_batch_finished)
+        self.worker.start()
+
+    def on_burn_batch_finished(self, success, message):
+        """Handle completion of burn batch"""
+        self.burn_process_btn.setEnabled(True)
+        if success:
+            self.burn_status_label.setText(f"✅ Batch processing complete!")
+            QMessageBox.information(self, "Success", "Batch burning completed successfully!")
+        else:
+            self.burn_status_label.setText(f"❌ Error: {message}")
+            QMessageBox.critical(self, "Error", message)
+
     def apply_styles(self):
         """Apply premium modern dark theme with glassmorphism"""
         self.setStyleSheet("""

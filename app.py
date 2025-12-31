@@ -388,6 +388,7 @@ def merge_audio_video_files(
     return output_path
 
 
+
 def process_audio_video_batch(
     audio_folder: str,
     video_folder: str,
@@ -480,6 +481,86 @@ def process_audio_video_batch(
     
     print(f"\n{'='*60}")
     print(f"Batch Processing Complete!")
+    print(f"Successful: {sum(1 for _, success, _ in results if success)}/{len(results)}")
+    print(f"{'='*60}\n")
+    
+    return results
+
+
+def process_burn_captions_batch(
+    video_folder: str,
+    srt_folder: str,
+    output_folder: str,
+    font_size: int = 24,
+    font_color: str = "white"
+) -> List[Tuple[str, bool, str]]:
+    """
+    Process batch burning of captions into videos.
+    
+    Args:
+        video_folder: Folder containing MP4 videos
+        srt_folder: Folder containing SRT subtitles
+        output_folder: Folder for output videos
+        font_size: Caption font size
+        font_color: Caption color
+        
+    Returns:
+        List of (filename, success, message) tuples
+    """
+    # Create output folder if it doesn't exist
+    Path(output_folder).mkdir(parents=True, exist_ok=True)
+    
+    # Scan for MP4 files
+    video_path = Path(video_folder)
+    mp4_files = {f.stem: f for f in video_path.glob("*.mp4")}
+    mp4_files.update({f.stem: f for f in video_path.glob("*.MP4")})
+    
+    # Scan for SRT files
+    srt_path = Path(srt_folder)
+    srt_files = {f.stem: f for f in srt_path.glob("*.srt")}
+    srt_files.update({f.stem: f for f in srt_path.glob("*.SRT")})
+    
+    print(f"\nFound {len(mp4_files)} MP4 file(s)")
+    print(f"Found {len(srt_files)} SRT file(s)\n")
+    
+    # Match files by name
+    matched_pairs = []
+    for name in mp4_files.keys():
+        if name in srt_files:
+            matched_pairs.append((name, mp4_files[name], srt_files[name]))
+            
+    print(f"Matched {len(matched_pairs)} file pair(s)\n")
+    
+    if not matched_pairs:
+        print("⚠️  No matched file pairs found!")
+        return []
+
+    # Process each pair
+    results = []
+    for idx, (name, mp4_file, srt_file) in enumerate(matched_pairs, 1):
+        print(f"\n{'='*60}")
+        print(f"Processing {idx}/{len(matched_pairs)}: {name}")
+        print(f"{'='*60}")
+        
+        output_file = Path(output_folder) / f"{name}_captioned.mp4"
+        
+        try:
+            burn_captions_to_video(
+                str(mp4_file),
+                str(srt_file),
+                str(output_file),
+                font_size=font_size,
+                font_color=font_color
+            )
+            results.append((name, True, "Success"))
+            print(f"✓ [{idx}/{len(matched_pairs)}] {name} - Success")
+        except Exception as e:
+            error_msg = str(e)
+            results.append((name, False, error_msg))
+            print(f"✗ [{idx}/{len(matched_pairs)}] {name} - Error: {error_msg}")
+            
+    print(f"\n{'='*60}")
+    print(f"Batch Burn Processing Complete!")
     print(f"Successful: {sum(1 for _, success, _ in results if success)}/{len(results)}")
     print(f"{'='*60}\n")
     
